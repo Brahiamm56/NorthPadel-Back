@@ -10,6 +10,7 @@ const { db } = require('./config/firebase');
 const canchasRoutes = require('./routes/canchas');
 const reservasRoutes = require('./routes/reservas');
 const authRoutes = require('./routes/auth'); // <-- LÍNEA AÑADIDA
+const adminRoutes = require('./routes/admin');
 
 // Crear la aplicación de Express
 const app = express();
@@ -18,11 +19,20 @@ const app = express();
 app.use(cors()); // Habilita CORS para permitir peticiones desde tu app
 app.use(express.json()); // Permite que el servidor entienda peticiones con cuerpo en formato JSON
 
+// Middleware para registrar todas las peticiones
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+  console.log('Headers:', req.headers);
+  console.log('Body:', req.body);
+  next();
+});
+
 // --- 2. USAR LAS RUTAS ---
 // Cualquier petición a /api/canchas será manejada por canchasRoutes
 app.use('/api/canchas', canchasRoutes);
 app.use('/api/reservas', reservasRoutes);
 app.use('/api/auth', authRoutes); // <-- LÍNEA AÑADIDA
+app.use('/api/admin', adminRoutes);
 
 // Definir una ruta de prueba
 app.get('/', (req, res) => {

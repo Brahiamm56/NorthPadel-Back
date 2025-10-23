@@ -79,15 +79,23 @@ router.post('/login', async (req, res) => {
 
         const token = jwt.sign(payload, process.env.JWT_SECRET || 'tu_secreto_por_defecto', { expiresIn: '1h' });
 
+        // ✅ Construir objeto de usuario
+        const userResponse = {
+            id: userDoc.id,
+            nombre: userData.nombre,
+            email: userData.email,
+            role: userData.role
+        };
+
+        // ✅ Si es admin, incluir complejoId
+        if (userData.role === 'admin' && userData.complejoId) {
+            userResponse.complejoId = userData.complejoId;
+        }
+
         res.status(200).json({
             message: 'Inicio de sesión exitoso',
             token,
-            user: {
-                id: userDoc.id,
-                nombre: userData.nombre,
-                email: userData.email,
-                role: userData.role
-            }
+            user: userResponse
         });
 
     } catch (error) {
