@@ -2,40 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { db, admin } = require('../config/firebase');
 const { protect } = require('../middlewares/authMiddleware');
-const cloudinary = require('cloudinary').v2;
 const notificationService = require('../services/notifications.service');
-
-// Configurar Cloudinary con las credenciales del .env
-cloudinary.config({ 
-  cloud_name: process.env.CLOUD_NAME, 
-  api_key: process.env.API_KEY, 
-  api_secret: process.env.API_SECRET 
-});
-
-// --- NUEVO ENDPOINT PARA LA FIRMA DE CLOUDINARY ---
-// POST /api/admin/generate-cloudinary-signature
-router.post('/generate-cloudinary-signature', protect, (req, res) => {
-    try {
-        const timestamp = Math.round((new Date).getTime()/1000);
-        const folder = 'northpadel/canchas'; // Carpeta específica en Cloudinary
-
-        // Usa el API Secret para firmar los parámetros de la subida
-        const signature = cloudinary.utils.api_sign_request({
-            timestamp: timestamp,
-            folder: folder
-        }, process.env.API_SECRET);
-
-        res.status(200).json({ 
-            timestamp, 
-            signature,
-            folder,
-            api_key: process.env.API_KEY
-        });
-    } catch (error) {
-        console.error("Error al generar la firma de Cloudinary: ", error);
-        res.status(500).json({ message: "Error interno del servidor." });
-    }
-});
 
 // GET /api/admin/canchas - Obtiene las canchas del complejo del admin
 router.get('/canchas', protect, async (req, res) => {
