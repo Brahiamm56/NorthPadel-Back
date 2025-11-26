@@ -6,11 +6,16 @@ require('dotenv').config(); // Carga las variables de entorno
 // Al importar este archivo, se ejecuta el código de conexión a Firebase
 const { db } = require('./config/firebase');
 
+// Importar sistema de jobs programados
+const NotificationJobs = require('./jobs/notificationJobs');
+
 // --- 1. IMPORTAR LAS RUTAS ---
 const canchasRoutes = require('./routes/canchas');
 const reservasRoutes = require('./routes/reservas');
 const authRoutes = require('./routes/auth'); // <-- LÍNEA AÑADIDA
 const adminRoutes = require('./routes/admin');
+const notificationsRoutes = require('./routes/notifications'); // <-- Rutas de notificaciones
+const userRoutes = require('./routes/users'); // <-- Rutas de usuarios
 
 // Crear la aplicación de Express
 const app = express();
@@ -33,6 +38,8 @@ app.use('/api/canchas', canchasRoutes);
 app.use('/api/reservas', reservasRoutes);
 app.use('/api/auth', authRoutes); // <-- LÍNEA AÑADIDA
 app.use('/api/admin', adminRoutes);
+app.use('/api/notifications', notificationsRoutes); // <-- Rutas de notificaciones
+app.use('/api/users', userRoutes); // <-- Rutas de usuarios
 
 // Definir una ruta de prueba
 app.get('/', (req, res) => {
@@ -44,5 +51,18 @@ const PORT = process.env.PORT || 3000;
 
 // Iniciar el servidor
 app.listen(PORT, () => {
-  console.log(`Servidor corriendo en el puerto ${PORT}`);
+  console.log(`Servidor corriendo en el puerto ${PORT}`);
+  
+  // Iniciar jobs programados si las notificaciones están habilitadas
+  if (process.env.NOTIFICATION_ENABLED !== 'false') {
+    console.log('🚀 Iniciando sistema de notificaciones programadas...');
+    try {
+      NotificationJobs.start();
+      console.log('✅ Sistema de notificaciones programadas iniciado correctamente');
+    } catch (error) {
+      console.error('❌ Error iniciando sistema de notificaciones:', error);
+    }
+  } else {
+    console.log('⚠️ Notificaciones deshabilitadas (NOTIFICATION_ENABLED=false)');
+  }
 });

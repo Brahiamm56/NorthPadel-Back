@@ -3,6 +3,7 @@ const router = express.Router();
 const { db, admin } = require('../config/firebase');
 const { protect } = require('../middlewares/authMiddleware');
 const cloudinary = require('cloudinary').v2;
+const notificationService = require('../services/notifications.service');
 
 // Configurar Cloudinary con las credenciales del .env
 cloudinary.config({ 
@@ -715,6 +716,51 @@ router.put('/reservas/:reservaId/confirmar', protect, async (req, res) => {
     // Log de auditoría
     console.log(`[AUDIT] ✅ Reserva ${reservaId} confirmada exitosamente por admin ${adminId} el ${fechaConfirmacion.toISOString()}`);
 
+    // Enviar notificación al USUARIO sobre la confirmación
+    try {
+      const userDoc = await db.collection('users').doc(reservaData.usuarioId).get();
+      if (userDoc.exists) {
+        const userData = userDoc.data();
+        
+        if (userData.pushToken && userData.notificationsEnabled !== false) {
+          const canReceive = await notificationService.canUserReceiveNotification(
+            reservaData.usuarioId, 
+            'confirmations'
+          );
+          
+          if (canReceive) {
+            await notificationService.sendReservaConfirmation(
+              userData.pushToken,
+              {
+                id: reservaId,
+                canchaNombre: reservaData.canchaNombre,
+                fecha: reservaData.fecha,
+                hora: reservaData.hora,
+              },
+              reservaData.usuarioId
+            );
+            console.log(`✅ Notificación de confirmación enviada al usuario ${reservaData.usuarioId}`);
+            
+            // Programar recordatorio (2 horas antes)
+            if (reservaData.fechaHora) {
+              const fechaHoraReserva = new Date(reservaData.fechaHora);
+              await notificationService.scheduleReminder(
+                reservaId,
+                reservaData.canchaNombre,
+                fechaHoraReserva,
+                userData.pushToken,
+                reservaData.usuarioId
+              );
+              console.log(`⏰ Recordatorio programado para reserva ${reservaId}`);
+            }
+          }
+        }
+      }
+    } catch (notificationError) {
+      console.error('Error enviando notificación al usuario:', notificationError);
+      // No fallar la confirmación si falla la notificación
+    }
+
     // Obtener reserva actualizada
     const reservaActualizada = await reservaRef.get();
 
@@ -810,6 +856,37 @@ router.put('/reservas/:reservaId/cancelar', protect, async (req, res) => {
     // Log de auditoría
     console.log(`[AUDIT] ✅ Reserva ${reservaId} cancelada exitosamente por admin ${adminId} el ${fechaCancelacion.toISOString()}`);
 
+    // Enviar notificación al USUARIO sobre la cancelación
+    try {
+      const userDoc = await db.collection('users').doc(reservaData.usuarioId).get();
+      if (userDoc.exists) {
+        const userData = userDoc.data();
+        
+        if (userData.pushToken && userData.notificationsEnabled !== false) {
+          const canReceive = await notificationService.canUserReceiveNotification(
+            reservaData.usuarioId, 
+            'confirmations'
+          );
+          
+          if (canReceive) {
+            await notificationService.sendReservaCancellation(
+              userData.pushToken,
+              {
+                canchaNombre: reservaData.canchaNombre,
+                fecha: reservaData.fecha,
+                hora: reservaData.hora,
+              },
+              reservaData.usuarioId
+            );
+            console.log(`✅ Notificación de cancelación enviada al usuario ${reservaData.usuarioId}`);
+          }
+        }
+      }
+    } catch (notificationError) {
+      console.error('Error enviando notificación de cancelación al usuario:', notificationError);
+      // No fallar la cancelación si falla la notificación
+    }
+
     // Obtener reserva actualizada
     const reservaActualizada = await reservaRef.get();
 
@@ -892,6 +969,54 @@ router.get('/reservas/:reservaId/diagnostico', protect, async (req, res) => {
       message: "Error interno del servidor en diagnóstico.",
       error: error.message 
     });
+  }
+});
+
+// GET /api/admin/perfil-complejo - Obtiene la información básica del complejo del admin
+router.get('/perfil-complejo', protect, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+
+    // 1. Buscar al usuario admin
+    const adminDoc = await db.collection('users').doc(userId).get();
+    
+    if (!adminDoc.exists) {
+      console.log(`[PERFIL-COMPLEJO] ❌ Usuario ${userId} no encontrado`);
+      return res.status(404).json({ message: 'Usuario no encontrado.' });
+    }
+
+    const adminData = adminDoc.data();
+
+    // 2. Verificar que tenga complejoId asignado
+    if (!adminData.complejoId) {
+      console.log(`[PERFIL-COMPLEJO] ❌ Usuario ${userId} sin complejo asignado`);
+      return res.status(404).json({ message: 'No tienes un complejo asignado.' });
+    }
+
+    const complejoId = adminData.complejoId;
+
+    // 3. Buscar el documento del complejo
+    const complejoDoc = await db.collection('complejos').doc(complejoId).get();
+
+    if (!complejoDoc.exists) {
+      console.log(`[PERFIL-COMPLEJO] ❌ Complejo ${complejoId} no encontrado`);
+      return res.status(404).json({ message: 'Complejo no encontrado.' });
+    }
+
+    const complejoData = complejoDoc.data();
+
+    // 4. Devolver datos básicos del complejo
+    console.log(`[PERFIL-COMPLEJO] ✅ Datos del complejo ${complejoId} obtenidos para admin ${userId}`);
+    
+    res.status(200).json({
+      id: complejoDoc.id,
+      nombre: complejoData.nombre || '',
+      telefono: complejoData.telefono || '',
+    });
+
+  } catch (error) {
+    console.error('[PERFIL-COMPLEJO] Error:', error);
+    res.status(500).json({ message: 'Error interno del servidor.' });
   }
 });
 
