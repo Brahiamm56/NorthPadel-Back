@@ -11,12 +11,12 @@ router.post('/register', async (req, res) => {
     const { nombre, apellido, email, password, telefono } = req.body;
 
     if (!email || !password || !nombre) {
-      return res.status(400).send('Nombre, email y contraseña son requeridos.');
+      return res.status(400).json({ message: 'Nombre, email y contraseña son requeridos.' });
     }
 
     const userQuery = await db.collection('users').where('email', '==', email).get();
     if (!userQuery.empty) {
-      return res.status(409).send('El email ya está en uso.');
+      return res.status(409).json({ message: 'El email ya está en uso.' });
     }
 
     const salt = await bcrypt.genSalt(10);
@@ -31,6 +31,14 @@ router.post('/register', async (req, res) => {
       role: 'user',
       createdAt: new Date(),
       updatedAt: new Date(),
+      // Campos de notificaciones
+      pushToken: null,
+      notificationsEnabled: true,
+      notificationPreferences: {
+        reminders: true,
+        confirmations: true,
+        weatherAlerts: true,
+      },
     };
 
     const docRef = await db.collection('users').add(newUser);
@@ -38,7 +46,7 @@ router.post('/register', async (req, res) => {
 
   } catch (error) {
     console.error("Error al registrar el usuario: ", error);
-    res.status(500).send("Error interno del servidor.");
+    res.status(500).json({ message: "Error interno del servidor." });
   }
 });
 
@@ -50,12 +58,12 @@ router.post('/login', async (req, res) => {
 
         // Validar que se proporcionen email y password
         if (!email || !password) {
-            return res.status(400).send('Email y contraseña son requeridos.');
+            return res.status(400).json({ message: 'Email y contraseña son requeridos.' });
         }
 
         const userQuery = await db.collection('users').where('email', '==', email.toLowerCase()).get();
         if (userQuery.empty) {
-            return res.status(404).send('Usuario no encontrado.');
+            return res.status(404).json({ message: 'Usuario no encontrado.' });
         }
 
         const userDoc = userQuery.docs[0];
@@ -64,12 +72,12 @@ router.post('/login', async (req, res) => {
         // Validar que el usuario tenga un campo password
         if (!userData.password) {
             console.error(`Usuario ${email} no tiene campo password. Posible usuario creado manualmente.`);
-            return res.status(500).send('Error en la configuración del usuario. Por favor, regístrate nuevamente.');
+            return res.status(500).json({ message: 'Error en la configuración del usuario. Por favor, regístrate nuevamente.' });
         }
 
         const isMatch = await bcrypt.compare(password, userData.password);
         if (!isMatch) {
-            return res.status(401).send('Contraseña incorrecta.');
+            return res.status(401).json({ message: 'Contraseña incorrecta.' });
         }
 
         const payload = {
@@ -100,8 +108,146 @@ router.post('/login', async (req, res) => {
 
     } catch (error) {
         console.error("Error al iniciar sesión: ", error);
-        res.status(500).send("Error interno del servidor.");
+        res.status(500).json({ message: "Error interno del servidor." });
     }
+});
+
+// --- ENDPOINT PARA LOGIN CON GOOGLE ---
+// POST /api/auth/google-login
+router.post('/google-login', async (req, res) => {
+  try {
+    const { email, nombre, uid, photoURL } = req.body;
+
+    // Validación de campos requeridos
+    if (!email) {
+      console.log('[Google Login] Error: Email no proporcionado');
+      return res.status(400).json({ message: 'El email es requerido.' });
+    }
+
+    if (!uid) {
+      console.log('[Google Login] Error: UID de Firebase no proporcionado');
+      return res.status(400).json({ message: 'El UID de Firebase es requerido.' });
+    }
+
+    const normalizedEmail = email.toLowerCase();
+    
+    // Generar nombre a partir del email si no se proporciona
+    const userName = nombre || normalizedEmail.split('@')[0];
+
+    console.log(`[Google Login] Procesando login para: ${normalizedEmail}`);
+
+    // Usar transacción para evitar duplicados
+    const result = await db.runTransaction(async (transaction) => {
+      // Buscar usuario existente por email
+      const userQuery = await db.collection('users').where('email', '==', normalizedEmail).get();
+      
+      let userDoc;
+      let userData;
+      let isNewUser = false;
+
+      if (userQuery.empty) {
+        // Usuario no existe, crear nuevo
+        isNewUser = true;
+        console.log(`[Google Login] Creando nuevo usuario: ${normalizedEmail}`);
+
+        const newUser = {
+          email: normalizedEmail,
+          nombre: userName,
+          role: 'user',
+          firebaseUid: uid,
+          photoURL: photoURL || null,
+          authProvider: 'google',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          // Campos de notificaciones (consistente con register)
+          pushToken: null,
+          notificationsEnabled: true,
+          notificationPreferences: {
+            reminders: true,
+            confirmations: true,
+            weatherAlerts: true,
+          },
+        };
+
+        const newDocRef = db.collection('users').doc();
+        transaction.set(newDocRef, newUser);
+        
+        userDoc = { id: newDocRef.id };
+        userData = newUser;
+      } else {
+        // Usuario existe, actualizar información
+        userDoc = userQuery.docs[0];
+        userData = userDoc.data();
+        
+        console.log(`[Google Login] Usuario existente encontrado: ${normalizedEmail}`);
+
+        // Actualizar datos del usuario
+        const updateData = {
+          firebaseUid: uid,
+          photoURL: photoURL || userData.photoURL || null,
+          updatedAt: new Date(),
+        };
+
+        // Si el usuario se registró con email y ahora usa Google, actualizar authProvider
+        if (userData.authProvider !== 'google') {
+          updateData.authProvider = 'google';
+        }
+
+        // Actualizar nombre solo si viene de Google y el actual está vacío o es el email
+        if (nombre && (!userData.nombre || userData.nombre === normalizedEmail.split('@')[0])) {
+          updateData.nombre = nombre;
+        }
+
+        transaction.update(userDoc.ref, updateData);
+        
+        // Merge para la respuesta
+        userData = { ...userData, ...updateData };
+        userDoc = { id: userDoc.id };
+      }
+
+      return { userDoc, userData, isNewUser };
+    });
+
+    const { userDoc, userData, isNewUser } = result;
+
+    // Generar JWT
+    const payload = {
+      userId: userDoc.id,
+      role: userData.role,
+    };
+
+    const token = jwt.sign(
+      payload, 
+      process.env.JWT_SECRET || 'tu_secreto_por_defecto', 
+      { expiresIn: '7d' }
+    );
+
+    // Construir respuesta del usuario
+    const userResponse = {
+      id: userDoc.id,
+      email: userData.email,
+      nombre: userData.nombre,
+      role: userData.role,
+      photoURL: userData.photoURL,
+    };
+
+    // Si es admin, incluir complejoId
+    if (userData.role === 'admin' && userData.complejoId) {
+      userResponse.complejoId = userData.complejoId;
+    }
+
+    console.log(`[Google Login] ${isNewUser ? 'Nuevo usuario creado' : 'Usuario actualizado'}: ${normalizedEmail}`);
+
+    res.status(200).json({
+      message: isNewUser ? 'Usuario registrado exitosamente con Google' : 'Inicio de sesión exitoso con Google',
+      token,
+      user: userResponse,
+    });
+
+  } catch (error) {
+    console.error('[Google Login] Error:', error);
+    res.status(500).json({ message: 'Error interno del servidor.' });
+  }
 });
 
 // --- ¡LÍNEA MÁS IMPORTANTE! ---
