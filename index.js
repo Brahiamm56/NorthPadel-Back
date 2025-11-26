@@ -7,7 +7,17 @@ require('dotenv').config(); // Carga las variables de entorno
 const { db } = require('./config/firebase');
 
 // Importar sistema de jobs programados
-const NotificationJobs = require('./jobs/notificationJobs');
+let NotificationJobs = {
+  start: () => {
+    console.log('⚠️ Sistema de notificaciones programadas no disponible (módulo ./jobs/notificationJobs no encontrado).');
+  }
+};
+
+try {
+  NotificationJobs = require('./jobs/notificationJobs');
+} catch (error) {
+  console.warn('⚠️ No se pudo cargar ./jobs/notificationJobs. Las notificaciones programadas estarán deshabilitadas.', error.message);
+}
 
 // --- 1. IMPORTAR LAS RUTAS ---
 const canchasRoutes = require('./routes/canchas');
